@@ -44,7 +44,7 @@ POINT = {  # single-date items (as at latest balance sheet)
 STATEMENT = {"revenue_from_operations": "IS", "cash_and_cash_equivalents": "BS", "cfo": "CF"}
 
 
-def make_frame() -> pd.DataFrame:
+def _rows():
     rows = []
     for item, vals in FY.items():
         for fy, v in zip((2023, 2024, 2025), vals):
@@ -54,11 +54,53 @@ def make_frame() -> pd.DataFrame:
     for item, v in POINT.items():
         unit = "crore shares" if item.startswith("shares") else "INR crore"
         rows.append(f"testco,POINT,2025-03-31,X,{item},{v},{unit},{SRC},{DATE},TEST,")
-    text = ",".join(dl.LONG_COLUMNS) + "\n" + "\n".join(rows) + "\n"
+    return rows
+
+
+def financials_csv_text() -> str:
+    return ",".join(dl.LONG_COLUMNS) + "\n" + "\n".join(_rows()) + "\n"
+
+
+def make_frame() -> pd.DataFrame:
     import tempfile, pathlib
     p = pathlib.Path(tempfile.mkdtemp()) / "fixture.csv"
-    p.write_text(text, encoding="utf-8")
+    p.write_text(financials_csv_text(), encoding="utf-8")
     return dl.read_long_table(p, "testco")
+
+
+def write_company_files(d):
+    """Write a complete set of TEST data files for company 'testco'. Returns (config dict, peers path).
+    Config = repo defaults + a testco block pointing at the files (readiness and loading tests)."""
+    import pathlib
+    d = pathlib.Path(d)
+    (d / "fin.csv").write_text(financials_csv_text(), encoding="utf-8")
+    hdr = ",".join(dl.LONG_COLUMNS)
+    mk = [f"testco,POINT,2025-03-31,MKT,{i},{v},{u},{SRC},{DATE},TEST," for i, v, u in
+          (("price", 320.0, "INR"), ("rf", 0.07, "ratio"), ("erp", 0.07, "ratio"), ("beta", 1.3, "x"), ("beta_se", 0.25, "x"))]
+    (d / "mkt.csv").write_text(hdr + "\n" + "\n".join(mk) + "\n", encoding="utf-8")
+    (d / "peers.csv").write_text(
+        "name,levered_beta,debt,market_cap,tax_rate,source,source_date\n"
+        f"TEST Peer A,1.2,50,500,0.25,{SRC},{DATE}\nTEST Peer B,1.0,20,400,0.25,{SRC},{DATE}\n", encoding="utf-8")
+    cfg = dl.load_config()
+    a = lambda v, ref: {"value": v, "ref": ref}
+    cfg["companies"] = {"testco": {
+        "name": "TESTCO Ltd (synthetic)", "currency": "INR", "first_fy": 2023, "last_fy": 2025, "fiscal_year_end_month": 3,
+        "assumptions_as_of": "2025-01-01", "data_file": str(d / "fin.csv"), "market_data_file": str(d / "mkt.csv"),
+        "segments": ["food_delivery", "quick_commerce"],
+        "benchmarks": {"peers": [{"name": "TEST Peer A"}, {"name": "TEST Peer B"}]},
+        "assumptions": {"terminal_growth": a(0.05, "A1"), "terminal_ebit_margin_range": a([0.12, 0.24], "A2"),
+                        "base_case_terminal_ebit_margin": a(0.18, "A2"), "base_case_revenue_cagr": a(0.20, "A23"),
+                        "sales_to_capital": a(2.5, "A3"), "cost_of_debt_pretax": a(0.09, "A4"),
+                        "target_debt_weight": a(0.03, "A5"), "tax_rate_statutory": a(0.25, "A7"),
+                        "tax_rate_terminal": a(0.25, "A7")},
+        "monte_carlo": {"n_sims": 1000, "seed": 20250101, "correlation_cagr_margin": a(0.3, "A26"),
+                        "distributions": {
+                            "revenue_cagr": {"type": "triangular", "low": 0.12, "mode": 0.20, "high": 0.28},
+                            "terminal_ebit_margin": {"type": "triangular", "low": 0.12, "mode": 0.18, "high": 0.24},
+                            "wacc": {"type": "truncated_normal", "mean": 0.145, "sd": 0.01, "low": 0.12, "high": 0.17},
+                            "terminal_growth": {"type": "triangular", "low": 0.04, "mode": 0.05, "high": 0.06}}},
+    }}
+    return cfg, d / "peers.csv"
 
 
 def make_config() -> dict:
