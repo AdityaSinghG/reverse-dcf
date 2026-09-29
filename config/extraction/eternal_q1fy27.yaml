@@ -8,11 +8,13 @@ source: "eternal_Q1FY27_results.pdf: statement of consolidated unaudited financi
 source_date: "2026-07-22"          # board approval date printed on p.26 (note 1) and p.27
 unit: "INR crore"
 # Column order printed on p.25 and p.26 tables, mapped to periods we load.
+image_reads_file: data/raw/eternal_q1fy27_image_reads.yaml   # BS p.18 and CF p.19 (no text layer): values read from page images
 column_order: [Q1FY27, Q4FY26, Q1FY26, FY2026]
 periods:
   Q1FY27: {period_type: Q,  period_end: "2026-06-30", header: "Quarter ended June 30, 2026 (Unaudited)"}
   FY2026: {period_type: FY, period_end: "2026-03-31", header: "Year ended March 31, 2026 (Audited)"}
-take_columns: [Q1FY27, FY2026]
+  Q1FY26: {period_type: Q,  period_end: "2025-06-30", header: "Quarter ended June 30, 2025 (Unaudited)"}
+take_columns: [Q1FY27, FY2026, Q1FY26]
 targets:
   - {item: revenue_from_operations, page: 25, statement: IS, label: 'Revenue from operations'}
   - {item: other_income, page: 25, statement: IS, label: 'Other income'}

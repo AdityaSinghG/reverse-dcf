@@ -48,6 +48,7 @@ class Rec:
     printed_tokens: str = ""
     read_note: str = ""               # CLEAN | GLYPH-CORRECTED | DERIVED | reason for NOT FOUND
     other_filing_version: str = "n/a: only one filing supplied"
+    method: str = "TEXT_LAYER"        # TEXT_LAYER | IMAGE_READ (transcribed from the rendered page image)
     document: str = ""
     source_date: str = ""
 
@@ -156,7 +157,58 @@ def extract(spec: dict, pdf_path: Path) -> list[Rec]:
                 v, note = parse_token(tok)
                 recs.append(mk(item, pc, status="FILLED", value=v, statement="SEG", pdf_page=seg["page"],
                                line_as_printed=block[i], printed_tokens=tok, read_note=note))
+    if spec.get("image_reads_file"):
+        recs += image_recs(spec, yaml.safe_load(open(ROOT / spec["image_reads_file"], encoding="utf-8")))
     return recs
+
+
+def image_recs(spec: dict, ir: dict) -> list[Rec]:
+    """Records for values transcribed from page images. Every one is flagged IMAGE_READ."""
+    per = spec["periods"]
+    heads = {"bs": ir["bs_headers"], "cf": ir["cf_headers"]}
+    out = []
+
+    def mk(item, pc, value, read):
+        p = per[pc]
+        return Rec(line_item=item, period=pc, period_end=p["period_end"], period_type=p["period_type"],
+                   status="FILLED", value=value, statement=read["statement"], pdf_page=read["page"],
+                   column_header=heads[read["headers"]][pc], document=ir["document"], source_date=spec["source_date"],
+                   method="IMAGE_READ")
+
+    for r in ir["reads"]:
+        if "parts" in r:
+            for pc in r["parts"][0]["values"].keys():
+                toks = [pt["values"][pc] for pt in r["parts"]]
+                rec = mk(r["item"], pc, sum(parse_token(t)[0] for t in toks), r)
+                rec.line_as_printed = " | ".join(pt["line"] for pt in r["parts"])
+                rec.printed_tokens = " + ".join(toks)
+                rec.read_note = "IMAGE_READ; DERIVED: " + r["derived_note"]
+                out.append(rec)
+            continue
+        for pc, tok in r["values"].items():
+            v, _ = parse_token(tok)
+            note = "IMAGE_READ"
+            if r.get("store_positive"):
+                v, note = abs(v), "IMAGE_READ; printed as an outflow in brackets, stored positive"
+            rec = mk(r["item"], pc, v, r)
+            rec.line_as_printed, rec.printed_tokens, rec.read_note = r["line"], tok, note
+            out.append(rec)
+    return out
+
+
+def foot_checks(ir: dict) -> list:
+    """Do the transcribed components sum to the printed sub-totals? Catches a misread digit.
+    Groups flagged hold_for_tie_out are the requested tie-outs and are NOT run here."""
+    res = []
+    for g in ir.get("foot_groups", []):
+        for k, lab in enumerate(["Jun-26", "Mar-26"]):
+            comp = sum(v[k] for v in g["components"].values())
+            res.append((g["name"], lab, comp, g["total"][k]))
+    for g in ir.get("cf_foot_groups", []):
+        if g.get("hold_for_tie_out"):
+            continue
+        res.append((g["name"], "FY2026", sum(g["components"].values()), g["total"]))
+    return res
 
 
 def not_found_records(key: str, spec: dict, filled: list[Rec], last_fy: int) -> list[Rec]:
@@ -164,7 +216,8 @@ def not_found_records(key: str, spec: dict, filled: list[Rec], last_fy: int) -> 
     cc = {**dl.company_config(key), "last_fy": last_fy}
     have = {(r.line_item, r.period_end[:4], r.period_type) for r in filled if r.status == "FILLED"}
     out = []
-    img_pages = {"balance_sheet": 18, "cash_flow": 19}
+    ir = yaml.safe_load(open(ROOT / spec["image_reads_file"], encoding="utf-8")) if spec.get("image_reads_file") else {}
+    known = ir.get("known_not_found", {})
     for group, items in cc["required_line_items"].items():
         for it in items:
             if group in cb.POINT_GROUPS:
@@ -175,9 +228,8 @@ def not_found_records(key: str, spec: dict, filled: list[Rec], last_fy: int) -> 
             for fy in range(cc["first_fy"], last_fy + 1):
                 if (it, str(fy), "FY") in have:
                     continue
-                if fy == last_fy and group in img_pages:
-                    why = (f"statement is on PDF p.{img_pages[group]} (letter annexure) as an image with no text layer; "
-                           "not read (no OCR). Filed quarterly results do not include this statement")
+                if fy == last_fy and it in known:
+                    why = known[it]
                 elif fy == last_fy:
                     why = "not found on the filed statement pages of this document"
                 else:
@@ -201,6 +253,11 @@ def read_checks(recs: list[Rec]) -> list[str]:
     return out
 
 
+def locator(r: Rec) -> str:
+    tag = "IMAGE_READ " if r.method == "IMAGE_READ" else ""
+    return f"{r.document} {tag}PDF p.{r.pdf_page}; printed line '{r.line_as_printed[:90]}'; column '{r.column_header}'"
+
+
 def write_outputs(key: str, spec: dict, recs: list[Rec], nf: list[Rec], out_csv: Path, out_dir: Path):
     cc = dl.company_config(key)
     rows = []
@@ -212,7 +269,7 @@ def write_outputs(key: str, spec: dict, recs: list[Rec], nf: list[Rec], out_csv:
         r = filled.pop((row["line_item"], row["period_type"], row["period_end"]), None)
         if r:
             row.update(value=f"{r.value:g}", source=spec["source"], source_date=spec["source_date"],
-                       statement=r.statement, locator=f"{r.document} PDF p.{r.pdf_page}; '{r.line_as_printed[:60]}'; column '{r.column_header}'",
+                       statement=r.statement, locator=locator(r),
                        notes=r.read_note if r.read_note != "CLEAN" else "")
         else:
             row["notes"] = "NOT FOUND"
@@ -221,13 +278,12 @@ def write_outputs(key: str, spec: dict, recs: list[Rec], nf: list[Rec], out_csv:
         rows.append(dict(company=key, period_type=r.period_type, period_end=r.period_end, statement=r.statement,
                          line_item=r.line_item, value=f"{r.value:g}", unit=spec["unit"], source=spec["source"],
                          source_date=spec["source_date"],
-                         locator=f"{r.document} PDF p.{r.pdf_page}; '{r.line_as_printed[:60]}'; column '{r.column_header}'",
-                         notes=r.read_note if r.read_note != "CLEAN" else ""))
+                         locator=locator(r), notes=r.read_note if r.read_note != "CLEAN" else ""))
     out_csv.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(rows, columns=dl.LONG_COLUMNS).to_csv(out_csv, index=False)
 
     sheet = pd.DataFrame([vars(r) for r in recs + nf])
-    sheet = sheet[["status", "line_item", "period", "period_end", "value", "pdf_page", "statement", "column_header",
+    sheet = sheet[["status", "method", "line_item", "period", "period_end", "value", "pdf_page", "statement", "column_header",
                    "printed_tokens", "line_as_printed", "read_note", "other_filing_version", "document", "source_date"]]
     sheet = sheet.sort_values(["status", "period_end", "line_item"], ascending=[False, False, True])
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -248,6 +304,13 @@ def main(argv=None):
     print(f"filled {sum(r.status == 'FILLED' for r in recs)}; not found {sum(r.status == 'NOT FOUND' for r in recs + nf)}")
     for line in read_checks(recs):
         print("read-check:", line)
+    if spec.get("image_reads_file"):
+        ir = yaml.safe_load(open(ROOT / spec["image_reads_file"], encoding="utf-8"))
+        fc = foot_checks(ir)
+        bad = [x for x in fc if x[2] != x[3]]
+        for name, lab, comp, tot in bad:
+            print(f"FOOTING DIFFERENCE {name} [{lab}]: components sum {comp:,} vs printed {tot:,}")
+        print(f"image-read sub-total footing: {len(fc) - len(bad)} of {len(fc)} sections foot")
 
 
 if __name__ == "__main__":

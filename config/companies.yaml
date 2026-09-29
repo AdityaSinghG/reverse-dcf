@@ -105,7 +105,7 @@ companies:
     statements: "consolidated"
     fiscal_year_end_month: 3          # March
     first_fy: 2022                    # first fiscal year to load (FY2022 = year ended 31-Mar-2022)
-    last_fy: null                     # set to latest reported FY once data file is filled
+    last_fy: 2026                     # latest audited FY in the data (year ended 31-Mar-2026)
     assumptions_as_of: null           # ISO date you set the assumptions below (recorded as their source date)
     data_file: "data/raw/eternal_financials.csv"
     market_data_file: "data/raw/eternal_market.csv"     # price, shares, valuation date (see notes/SOURCES_NEEDED.md)
