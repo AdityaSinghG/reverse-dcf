@@ -76,6 +76,8 @@ class ModelBundle:
     steps: dict             # axis step sizes for the sensitivity grids
     tolerances: dict
     run_date: str
+    label: str | None = None          # e.g. 'PRELIMINARY - ILLUSTRATIVE ASSUMPTIONS'; shown on every sheet
+    placeholders: tuple = ()          # Inputs keys that are placeholders (checks that depend on them are NOT ASSESSED)
 
 
 @dataclass
@@ -87,7 +89,8 @@ class BuildInfo:
 
 
 # ---- Python side (the reference the workbook must match) ------------------------------------------
-def python_model(b: ModelBundle) -> dict:
+def python_model(b: ModelBundle, price_outputs: bool = True) -> dict:
+    """price_outputs=False skips everything that depends on the market price (solver, Monte Carlo): value-only run."""
     cc, df = b.cc, b.df
     price = b.market["price"]
     shares = dl.latest_value(df, "shares_outstanding_diluted")[0]
@@ -103,7 +106,7 @@ def python_model(b: ModelBundle) -> dict:
         df, cc, wacc=wacc, revenue_cagr=b.scenario["revenue_cagr"]["value"],
         terminal_ebit_margin=b.scenario["terminal_ebit_margin"]["value"])
     res = dcf.run_dcf(inp)
-    solved = rs.solve_all(inp, price)
+    solved = rs.solve_all(inp, price) if price_outputs else None
     st = b.steps
     ax = lambda c, s: [c - 2 * s, c - s, c, c + s, c + 2 * s]
     axes = {"wacc": ax(wacc, st["wacc"]), "terminal_growth": ax(inp.terminal_growth, st["terminal_growth"]),
@@ -111,7 +114,7 @@ def python_model(b: ModelBundle) -> dict:
             "terminal_ebit_margin": ax(inp.terminal_ebit_margin, st["terminal_ebit_margin"])}
     grid_live = sens.wacc_vs_terminal_g(inp, axes["wacc"], axes["terminal_growth"])
     grid_static = sens.cagr_vs_terminal_margin(inp, axes["revenue_cagr"], axes["terminal_ebit_margin"])
-    mcs = mc.compare_correlation(inp, b.mc_spec, price)
+    mcs = mc.compare_correlation(inp, b.mc_spec, price) if price_outputs else None
     return {"wacc": wacc, "ke": ke, "kd_at": kd, "we": we, "wd": wd, "debt": debt, "equity_mkt": price * shares,
             "inp": inp, "res": res, "solved": solved, "axes": axes, "grid_live": grid_live,
             "grid_static": grid_static, "mc": mcs, "price": price}
@@ -148,11 +151,16 @@ def _section(ws, row, text, ncols=8):
     _put(ws, f"A{row}", text, F_BOLD)
 
 
+BANNER = {"text": None}          # set per build: e.g. 'PRELIMINARY - ILLUSTRATIVE ASSUMPTIONS'; shown on every sheet
+
+
 def _title(ws, text, sub=None, test=False):
     _put(ws, "A1", text, F_TITLE)
     if sub:
         _put(ws, "A2", sub, F_NOTE)
-    if test:
+    if BANNER["text"]:
+        _put(ws, "F1", BANNER["text"], F_BOLD, fill=FILL_TEST)
+    elif test:
         _put(ws, "F1", "TEST DATA: synthetic, not company data", F_BOLD, fill=FILL_TEST)
 
 
@@ -298,6 +306,7 @@ def write_forecast_block(ws, r0: int, title: str, R: dict, sheet: str) -> dict:
 # ---- workbook ------------------------------------------------------------------------------------------
 def build_workbook(b: ModelBundle, path: str | Path) -> BuildInfo:
     py = python_model(b)
+    BANNER["text"] = b.label
     inp, res, price = py["inp"], py["res"], py["price"]
     cc, df, T = b.cc, b.df, b.tolerances
     wb = openpyxl.Workbook()
@@ -307,7 +316,7 @@ def build_workbook(b: ModelBundle, path: str | Path) -> BuildInfo:
     today = b.run_date
     fys = sorted(df[(df["period_type"] == "FY") & df["value"].notna()]["period_end"].dt.year.unique())
     last_fy = fys[-1]
-    seg_items = sorted({i for i in df["line_item"] if i.startswith(dl.SEGMENT_PREFIX)})
+    seg_items = sorted({i for i in df[df["period_type"] == "FY"]["line_item"] if i.startswith(dl.SEGMENT_PREFIX)})
 
     # ---------------------------------------------------------------- Inputs
     I = InputsSheet(S["Inputs"], b.is_test)
@@ -381,7 +390,7 @@ def build_workbook(b: ModelBundle, path: str | Path) -> BuildInfo:
             hist[(item, fy)] = I.add(f"{item}@FY{fy}", f"{lab}, FY{fy}", float(r["value"]), b.units, r["source"],
                                      r["source_date"].date().isoformat(), fmt=NUM, note=r["locator"])
     for item in seg_items:
-        r = df[(df["line_item"] == item) & df["value"].notna()].sort_values("period_end").iloc[-1]
+        r = df[(df["line_item"] == item) & df["value"].notna() & (df["period_type"] == "FY")].sort_values("period_end").iloc[-1]
         hist[(item, int(r["period_end"].year))] = I.add(
             f"{item}@FY{r['period_end'].year}", f"{item}, FY{r['period_end'].year}", float(r["value"]), b.units,
             r["source"], r["source_date"].date().isoformat(), fmt=NUM)
@@ -390,6 +399,23 @@ def build_workbook(b: ModelBundle, path: str | Path) -> BuildInfo:
         for col, lab, fmt in (("levered_beta", "levered beta", "0.00"), ("debt", "debt incl. leases", NUM),
                               ("market_cap", "market cap", NUM), ("tax_rate", "tax rate", PCT)):
             I.add(f"peer{i}_{col}", f"{p.name}: {lab}", float(getattr(p, col)), "", p.source, p.source_date, fmt=fmt)
+    ltm_mode = cc.get("forecast", {}).get("base", "FY") == "LTM"
+    ltm_in = {}
+    if ltm_mode:
+        try:
+            dl.ltm_sum(df, "revenue_from_operations")
+            raise NotImplementedError("workbook LTM supports FY + latest quarter - same quarter last year only")
+        except dl.DataError:
+            pass
+        q_all = df[(df["period_type"] == "Q") & df["value"].notna()]
+        q_end = q_all["period_end"].max()
+        q_prior_end = q_all[(q_all["period_end"] - (q_end - pd.DateOffset(years=1))).abs() <= pd.Timedelta(days=5)]["period_end"].max()
+        I.section(f"6b. LTM build inputs: quarter ended {q_end.date()} and the same quarter a year earlier ({q_prior_end.date()})")
+        for item in ("revenue_from_operations", "total_expenses", "finance_costs"):
+            for tag, pend in (("cur", q_end), ("prior", q_prior_end)):
+                rw = df[(df["line_item"] == item) & (df["period_end"] == pend) & df["value"].notna()].iloc[0]
+                ltm_in[(item, tag)] = I.add(f"ltm_{tag}_{item}", f"{item}, quarter ended {pend.date()}", float(rw["value"]), b.units,
+                                            rw["source"], rw["source_date"].date().isoformat(), fmt=NUM, note=rw["locator"][:70])
     I.section("7. Sensitivity axis steps and check tolerances")
     for k, lab in (("wacc", "WACC step"), ("terminal_growth", "Terminal growth step"), ("revenue_cagr", "CAGR step"),
                    ("terminal_ebit_margin", "Terminal margin step")):
@@ -453,9 +479,11 @@ def build_workbook(b: ModelBundle, path: str | Path) -> BuildInfo:
         r += 1
     lastc = L(1 + len(fys))
     firstc = "B"
-    _put(H, f"A{r}", "Revenue CAGR, full history")
-    _put(H, f"B{r}", f"=({lastc}{hr['revenue_from_operations']}/{firstc}{hr['revenue_from_operations']})^(1/(COLUMNS({firstc}4:{lastc}4)-1))-1", fmt=PCT)
-    hist_cagr = _abs("Historicals", f"B{r}")
+    hist_cagr = None
+    if len(fys) > 1:
+        _put(H, f"A{r}", "Revenue CAGR, full history")
+        _put(H, f"B{r}", f"=({lastc}{hr['revenue_from_operations']}/{firstc}{hr['revenue_from_operations']})^(1/(COLUMNS({firstc}4:{lastc}4)-1))-1", fmt=PCT)
+        hist_cagr = _abs("Historicals", f"B{r}")
     r += 2
     _section(H, r, "Segment revenue, last fiscal year (must sum to consolidated)", len(fys) + 1)
     r += 1
@@ -475,6 +503,29 @@ def build_workbook(b: ModelBundle, path: str | Path) -> BuildInfo:
         seg_cons_ref = _abs("Historicals", f"B{r + 1}")
     base_rev_ref = _abs("Historicals", f"{lastc}{hr['revenue_from_operations']}")
     base_m_ref = _abs("Historicals", f"{lastc}{d['ebit_m']}")
+    if ltm_mode:
+        r += 3
+        _section(H, r, "LTM build (base period for the forecast) = FY + latest quarter - same quarter last year", 6)
+        r += 1
+        _head(H, r, ["Item", f"FY{last_fy}", "Latest quarter", "Same quarter last year", "LTM"])
+        lt = {}
+        for item, lab in (("revenue_from_operations", "Revenue from operations"), ("total_expenses", "Total expenses"),
+                          ("finance_costs", "Finance costs")):
+            r += 1
+            _put(H, f"A{r}", lab)
+            _put(H, f"B{r}", f"={hist[(item, last_fy)]}", fmt=NUM)
+            _put(H, f"C{r}", f"={ltm_in[(item, 'cur')]}", fmt=NUM)
+            _put(H, f"D{r}", f"={ltm_in[(item, 'prior')]}", fmt=NUM)
+            _put(H, f"E{r}", f"=B{r}+C{r}-D{r}", fmt=NUM, bold=True)
+            lt[item] = r
+        r += 1
+        _put(H, f"A{r}", "LTM operating EBIT = revenue - (expenses - finance costs)", F_BOLD)
+        _put(H, f"E{r}", f"=E{lt['revenue_from_operations']}-(E{lt['total_expenses']}-E{lt['finance_costs']})", fmt=NUM, bold=True)
+        r += 1
+        _put(H, f"A{r}", "LTM operating EBIT margin", F_BOLD)
+        _put(H, f"E{r}", f"=E{r - 1}/E{lt['revenue_from_operations']}", fmt=PCT, bold=True)
+        base_rev_ref = _abs("Historicals", f"E{lt['revenue_from_operations']}")
+        base_m_ref = _abs("Historicals", f"E{r}")
     gap_ref = _abs("Historicals", f"{lastc}{d['bs_gap']}")
     ta_ref = _abs("Historicals", f"{lastc}{hr['total_assets']}")
     sbc_ref = _abs("Historicals", f"{lastc}{hr['share_based_payment_expense']}")
@@ -555,22 +606,23 @@ def build_workbook(b: ModelBundle, path: str | Path) -> BuildInfo:
     _put(Wk, "B27", f"=B5-{A['z']}*B26", fmt="0.00")
     _put(Wk, "A28", "95% interval, high")
     _put(Wk, "B28", f"=B5+{A['z']}*B26", fmt="0.00")
-    _head(Wk, 30, ["Peer", "Unlevered beta", "Levered beta / debt / mcap / tax on Inputs"])
-    npeer = len(b.peers)
-    for i, p in enumerate(b.peers.itertuples()):
-        rr = 31 + i
-        _put(Wk, f"A{rr}", p.name)
-        bl, dd, mm, tt = (A[f"peer{i}_{c}"] for c in ("levered_beta", "debt", "market_cap", "tax_rate"))
-        _put(Wk, f"B{rr}", f"={bl}/(1+(1-{tt})*{dd}/{mm})", fmt="0.00")
-    e = 31 + npeer
-    _put(Wk, f"A{e}", "Median unlevered beta", F_BOLD)
-    _put(Wk, f"B{e}", f"=MEDIAN(B31:B{e - 1})", fmt="0.00", bold=True)
-    _put(Wk, f"A{e + 1}", "Relevered at target D/E (Eternal structure)")
-    _put(Wk, f"B{e + 1}", f"=B{e}*(1+(1-B10)*B18/B15)", fmt="0.00")
-    _put(Wk, f"A{e + 2}", "Regression beta minus relevered peer beta")
-    _put(Wk, f"B{e + 2}", f"=B5-B{e + 1}", fmt="0.00")
-    _put(Wk, f"A{e + 3}", "Regression beta consistent with peers within the 95% interval?")
-    _put(Wk, f"B{e + 3}", f'=IF(ABS(B{e + 2})<={A["z"]}*B26,"consistent","REVIEW: differs")')
+    if len(b.peers):
+        _head(Wk, 30, ["Peer", "Unlevered beta", "Levered beta / debt / mcap / tax on Inputs"])
+        npeer = len(b.peers)
+        for i, p in enumerate(b.peers.itertuples()):
+            rr = 31 + i
+            _put(Wk, f"A{rr}", p.name)
+            bl, dd, mm, tt = (A[f"peer{i}_{c}"] for c in ("levered_beta", "debt", "market_cap", "tax_rate"))
+            _put(Wk, f"B{rr}", f"={bl}/(1+(1-{tt})*{dd}/{mm})", fmt="0.00")
+        e = 31 + npeer
+        _put(Wk, f"A{e}", "Median unlevered beta", F_BOLD)
+        _put(Wk, f"B{e}", f"=MEDIAN(B31:B{e - 1})", fmt="0.00", bold=True)
+        _put(Wk, f"A{e + 1}", "Relevered at target D/E (Eternal structure)")
+        _put(Wk, f"B{e + 1}", f"=B{e}*(1+(1-B10)*B18/B15)", fmt="0.00")
+        _put(Wk, f"A{e + 2}", "Regression beta minus relevered peer beta")
+        _put(Wk, f"B{e + 2}", f"=B5-B{e + 1}", fmt="0.00")
+        _put(Wk, f"A{e + 3}", "Regression beta consistent with peers within the 95% interval?")
+        _put(Wk, f"B{e + 3}", f'=IF(ABS(B{e + 2})<={A["z"]}*B26,"consistent","REVIEW: differs")')
     info.expected.append(("WACC", wr["wacc"], py["wacc"]))
     info.expected.append(("cost of equity", wr["ke"], py["ke"]))
 
@@ -790,9 +842,11 @@ def build_workbook(b: ModelBundle, path: str | Path) -> BuildInfo:
     add("Tax-loss pool roll-forward: opening + added - used - closing = 0",
         f"=ABS({A['unabsorbed_tax_losses']}+SUM(Forecast!C{fr['nol_added']}:L{fr['nol_added']})-SUM(Forecast!C{fr['nol_used']}:L{fr['nol_used']})-Forecast!L{fr['nol_close']})",
         "=0", "{v}<={tn}", "0.000000")
-    add("Sign: revenue, shares, sales-to-capital, diluted-vs-basic shares",
-        f"=MIN({A['revenue_from_operations@FY' + str(last_fy)]},{A['shares_outstanding_diluted']},{A['sales_to_capital']},"
-        f"{A['shares_outstanding_diluted']}-{A['shares_outstanding_basic']})", "=0", "{v}>{l}", NUM2)
+    add("Sign: revenue, diluted shares, sales-to-capital are positive",
+        f"=MIN({A['revenue_from_operations@FY' + str(last_fy)]},{A['shares_outstanding_diluted']},{A['sales_to_capital']})",
+        "=0", "{v}>{l}", NUM2)
+    add("Diluted shares are at least basic shares",
+        f"={A['shares_outstanding_diluted']}-{A['shares_outstanding_basic']}", "=0", "{v}>={l}", NUM2)
     add("Sign: tax-loss pool, cash-like balances and fractions counted are >= 0",
         f"=MIN({A['unabsorbed_tax_losses']}," + ",".join(A["bs_" + k] for k in bw) + ")", "=0", "{v}>={l}", NUM2)
     add("Sign: fractions counted lie in [0, 1]", "=MAX(" + ",".join(A["w_" + k] for k in bw) + ")", "=1", "{v}<={l}", "0.00")
@@ -805,8 +859,11 @@ def build_workbook(b: ModelBundle, path: str | Path) -> BuildInfo:
         add(f"Reverse: DCF at implied {k} reproduces the market price", f"={ref}", f"={A['tol_price']}", "{v}<={l}", "0.0000%")
     add("WACC x g grid centre equals model value per share", f"=ABS({live_centre}/{fb['vps']}-1)", f"={A['tol_grid']}", "{v}<={l}", "0.0000%")
     add("Static CAGR x margin grid centre equals model value per share", f"=ABS({static_centre}/{fb['vps']}-1)", f"={A['tol_grid']}", "{v}<={l}", "0.0000%")
-    add("ESOP overlap (A11b): unamortised ESOP cost as % of equity value", f"={A['esop_unamortised_cost']}/{fb['equity']}",
-        f"={A['esop_flag']}", "{v}<={l}", "0.00%", review=True)
+    if "esop_unamortised_cost" in b.placeholders:
+        add("ESOP overlap (A11b): NOT ASSESSED, unamortised ESOP cost is a placeholder (not in the filing)", "=0", "=1", "{v}>{l}", "0", review=True)
+    else:
+        add("ESOP overlap (A11b): unamortised ESOP cost as % of equity value", f"={A['esop_unamortised_cost']}/{fb['equity']}",
+            f"={A['esop_flag']}", "{v}<={l}", "0.00%", review=True)
     add("Terminal marginal ROIC at or above WACC (growth not value-destroying)", f"={fb['roic']}-{wr['wacc']}", "=0", "{v}>={l}", "0.00%", review=True)
     for i, (desc, val, lim, cond, fmt, review) in enumerate(chk, start=1):
         r = 4 + i
@@ -829,7 +886,9 @@ def build_workbook(b: ModelBundle, path: str | Path) -> BuildInfo:
     Cv.column_dimensions["A"].width = 46
     Cv.column_dimensions["B"].width = 22
     Cv.column_dimensions["C"].width = 70
-    if b.is_test:
+    if b.label:
+        _put(Cv, "A3", b.label + ": every result here depends on round illustrative inputs, not evidence.", F_BOLD, fill=FILL_TEST)
+    elif b.is_test:
         _put(Cv, "A3", "TEST WORKBOOK: built from a synthetic fixture. Real data plugs in through the same Inputs tab.", F_BOLD, fill=FILL_TEST)
     kv = [("Company", f"={A['company_name']}", None), ("Valuation date", f"={A['valuation_date']}", None),
           ("Market price", f"={A['price']}", NUM2), ("Model value per share (base case)", f"={fb['vps']}", NUM2),
@@ -837,7 +896,7 @@ def build_workbook(b: ModelBundle, path: str | Path) -> BuildInfo:
           ("Implied revenue CAGR", f"={A['implied_revenue_cagr']}", PCT),
           ("Implied terminal EBIT margin", f"={A['implied_terminal_ebit_margin']}", PCT),
           ("Implied WACC", f"={A['implied_wacc']}", PCT), ("Model WACC (CAPM)", f"={wr['wacc']}", PCT),
-          ("Historical revenue CAGR (full window)", f"={hist_cagr}", PCT), ("Checks status", f"={info.cells['overall']}", None)]
+          *([("Historical revenue CAGR (full window)", f"={hist_cagr}", PCT)] if hist_cagr else []), ("Checks status", f"={info.cells['overall']}", None)]
     for i, (lab, f, fmt) in enumerate(kv, start=5):
         _put(Cv, f"A{i}", lab)
         _put(Cv, f"B{i}", f, fmt=fmt, bold=True)
