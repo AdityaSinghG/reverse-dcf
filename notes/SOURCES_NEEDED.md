@@ -48,6 +48,8 @@ cost of debt if debt is immaterial. These are ASSUMPTIONS A1-A7 and are still bl
 
 | E7 | ESOP audit lines: `esop_options_outstanding_vested`, `esop_options_outstanding_unvested`, `esop_unamortised_cost`, `esop_pool_ungranted`, `esop_trust_shares` | ESOP note and shareholding pattern | Avoids SBC/dilution double count (A11b) |
 
+| E8 | `total_liabilities` for each FY (balance sheet) | Balance sheet | Workbook balance check |
+
 ## Required line items
 Listed in `config/companies.yaml` under `defaults.required_line_items`. Run
 `python -m src.data_loader eternal` after filling data and setting `last_fy`; it prints every missing cell.

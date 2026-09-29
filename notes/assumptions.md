@@ -62,6 +62,16 @@ and the before/after mean of WACC and g are reported so any bias is visible. Any
 the DCF is counted by error type and excluded, never dropped silently (`n_valid + n_errors = n`).
 P(value >= price) is reported with its binomial standard error.
 
+## B4. Workbook conventions (Set, M5)
+
+| ID | Choice | Rationale |
+|----|--------|-----------|
+| A28 | Blue = input (Inputs tab only, each with source and date), black = formula, grey italic on grey = static Python output | Standard modelling colour code; enforced by `src/audit_excel.py`. |
+| A29 | No numeric literal in a formula except 0 and 1; tolerances, z-values, timing offsets and axis steps are Inputs | Every number is visible and sourced. |
+| A30 | Reverse solve values are static (Goal Seek cannot be created by openpyxl); the Reverse tab re-runs the full live DCF at each and checks it reproduces the price | The static number is auditable: it is proven by the live model, not trusted. |
+| A31 | WACC x g grid is live closed-form when the growth profile is constant (years 1-10 FCFF do not depend on WACC or g); otherwise static. CAGR x margin grid is always static | A per-cell closed form exists only where the FCFF row is independent of the varied inputs. Centre cells are checked against the live model. |
+| A32 | Excel is verified by LibreOffice headless recalculation and a cell-level comparison with Python (tolerance 0.1%) | If they differ, neither side is adjusted to fit; the differences are shown. |
+
 ## C. Not yet built (M2 scope decision needed, see chat)
 The engine runs on consolidated revenue and margin. A per-segment revenue and margin build (food delivery,
 Blinkit, Hyperpure, going-out) is not implemented; the segment data is currently validated and available

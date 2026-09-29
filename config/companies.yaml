@@ -71,6 +71,7 @@ defaults:
       - non_controlling_interest
       - total_equity
       - total_assets
+      - total_liabilities            # used by the workbook balance check (assets = equity + liabilities)
     tax:
       - unabsorbed_tax_losses        # amount of carried-forward losses (not the deferred-tax effect)
     cash_flow:
