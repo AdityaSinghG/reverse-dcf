@@ -123,6 +123,52 @@ companies:
         - {name: "Swiggy Ltd", ticker: "SWIGGY", exchange: "NSE", role: "direct domestic peer"}
         - {name: "DoorDash Inc", ticker: "DASH", exchange: "NASDAQ", role: "mature global delivery"}
         - {name: "Meituan", ticker: "3690", exchange: "HKEX", role: "mature global local-services"}
+    # ------------------------------------------------------------------------------------------------
+    # PRELIMINARY - ILLUSTRATIVE ASSUMPTIONS.  Off by default.  Turn on with `--preliminary` on the CLI or
+    # `enabled: true` here. Every value below is a ROUND ILLUSTRATIVE number for tonight's first pass, NOT
+    # evidence-based (see notes/assumptions.md, section "PRELIMINARY"). Edit freely. With the mode off the
+    # normal refusal gates apply and the blank assumptions above still block the run.
+    # ------------------------------------------------------------------------------------------------
+    preliminary:
+      enabled: false
+      label: "PRELIMINARY - ILLUSTRATIVE ASSUMPTIONS"
+      price: {value: null, date: null}          # YOU supply: approximate market price (INR) and its date
+      first_fy: 2026                            # single filing supplied: history is FY2026 only
+      forecast: {base: LTM}                     # LTM = FY26 + Q1FY27 - Q1FY26
+      market:                                   # ILLUSTRATIVE, not measured
+        rf: 0.07
+        erp: 0.07
+        beta: 1.2                               # assumed input, not a regression
+        beta_se: 0.25
+      point_inputs:                             # placeholders for items NOT in the Q1FY27 filing
+        shares_outstanding_diluted: {value: 921, unit: "crore shares", rows: [[POINT, "2026-06-30"]],
+          note: "APPROXIMATE: paid-up capital INR 921 crore / face value INR 1 (PDF p.25); no ESOP dilution added"}
+        shares_outstanding_basic: {value: 921, unit: "crore shares", rows: [[POINT, "2026-06-30"]],
+          note: "APPROXIMATE: paid-up capital INR 921 crore / face value INR 1 (PDF p.25)"}
+        unabsorbed_tax_losses: {value: 0, unit: "INR crore", rows: [[POINT, "2026-06-30"]],
+          note: "PLACEHOLDER: not in the Q1FY27 filing; 0 = no loss shield credited (conservative)"}
+        esop_unamortised_cost: {value: 0, unit: "INR crore", rows: [[POINT, "2026-06-30"]],
+          note: "PLACEHOLDER: not in the filing; the ESOP-overlap check is NOT ASSESSED in this mode"}
+        borrowings: {value: 0, unit: "INR crore", rows: [[FY, "2026-03-31"], [Q, "2026-06-30"]],
+          note: "no borrowings line on the balance sheet (PDF p.18); 0 assumed, unconfirmed against the notes"}
+      assumptions:
+        terminal_growth: 0.05
+        terminal_ebit_margin_range: [0.05, 0.12]
+        base_case_terminal_ebit_margin: 0.08
+        sales_to_capital: 3.0
+        cost_of_debt_pretax: 0.09
+        target_debt_weight: 0.05
+        tax_rate_statutory: 0.25
+        tax_rate_terminal: 0.25
+        base_case_revenue_cagr: 0.20
+      monte_carlo:
+        correlation_cagr_margin: 0.3
+        distributions:
+          revenue_cagr: {type: triangular, low: 0.10, mode: 0.20, high: 0.30}
+          terminal_ebit_margin: {type: triangular, low: 0.04, mode: 0.08, high: 0.12}
+          wacc: {type: truncated_normal, mean: 0.15, sd: 0.01, low: 0.12, high: 0.18}
+          terminal_growth: {type: triangular, low: 0.04, mode: 0.05, high: 0.06}
+
     # Judgement inputs: value stays null until YOU set it; each maps to an entry in notes/assumptions.md
     assumptions:
       terminal_growth: {value: null, ref: "A1"}

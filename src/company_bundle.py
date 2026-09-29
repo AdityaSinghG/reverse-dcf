@@ -11,6 +11,7 @@ Files (paths in config/companies.yaml):
 """
 from __future__ import annotations
 
+import copy
 import datetime as dt
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -74,8 +75,57 @@ def _blank_assumption(v) -> bool:
     return v is None or (isinstance(v, (list, tuple)) and (len(v) != 2 or any(x is None for x in v)))
 
 
-def check_readiness(key: str, cfg: dict | None = None) -> Readiness:
-    cc = dl.company_config(key, cfg)
+PRELIM_LABEL = "PRELIMINARY - ILLUSTRATIVE ASSUMPTIONS"
+
+
+def preliminary_on(cc: dict, flag: bool | None = None) -> bool:
+    """PRELIMINARY mode is on if requested explicitly or enabled in config. Off by default."""
+    return bool(flag) or bool((cc.get("preliminary") or {}).get("enabled"))
+
+
+def effective_config(key: str, cfg: dict | None = None, preliminary: bool | None = None) -> dict:
+    """Company config; in PRELIMINARY mode the illustrative overlay is applied on top of the blank
+    assumptions. In final mode the blanks are untouched, so the refusal gates behave exactly as before."""
+    cc = copy.deepcopy(dl.company_config(key, cfg))
+    if not preliminary_on(cc, preliminary):
+        return cc
+    pre = cc.get("preliminary") or {}
+    for k, v in pre.get("assumptions", {}).items():
+        cc.setdefault("assumptions", {})[k] = {**cc["assumptions"].get(k, {}), "value": v}
+    m = cc.setdefault("monte_carlo", {})
+    pm = pre.get("monte_carlo", {})
+    if "correlation_cagr_margin" in pm:
+        m["correlation_cagr_margin"] = {**m.get("correlation_cagr_margin", {}), "value": pm["correlation_cagr_margin"]}
+    dists = m.setdefault("distributions", {})
+    for n, spec in pm.get("distributions", {}).items():
+        dists[n] = {**dists.get(n, {}), **spec, "rationale": "ILLUSTRATIVE (not evidence-based)"}
+    if "first_fy" in pre:
+        cc["first_fy"] = pre["first_fy"]
+    cc["forecast"] = {**cc.get("forecast", {}), **pre.get("forecast", {})}
+    cc["assumptions_as_of"] = dt.date.today().isoformat()
+    cc["_preliminary"] = True
+    cc["_label"] = pre.get("label", PRELIM_LABEL)
+    return cc
+
+
+def add_point_inputs(df: pd.DataFrame, cc: dict) -> pd.DataFrame:
+    """PRELIMINARY placeholders for items that are not in the filing, appended as clearly-labelled rows."""
+    rows = []
+    for item, d in (cc.get("preliminary") or {}).get("point_inputs", {}).items():
+        for ptype, pend in d["rows"]:
+            rows.append({"company": cc.get("ticker", ""), "period_type": ptype, "period_end": pd.Timestamp(pend),
+                         "statement": "PRELIM", "line_item": item, "value": float(d["value"]), "unit": d["unit"],
+                         "source": "PRELIMINARY placeholder (not from a filing)", "source_date": pd.Timestamp(cc["assumptions_as_of"]),
+                         "locator": "config/companies.yaml preliminary.point_inputs", "notes": d["note"]})
+    if not rows:
+        return df
+    return pd.concat([df, pd.DataFrame(rows)], ignore_index=True)
+
+
+def check_readiness(key: str, cfg: dict | None = None, preliminary: bool | None = None,
+                    price: dict | None = None) -> Readiness:
+    cc = effective_config(key, cfg, preliminary)
+    prelim = bool(cc.get("_preliminary"))
     rd = Readiness(key)
 
     # --- assumptions and dates -----------------------------------------------------------------
@@ -121,6 +171,8 @@ def check_readiness(key: str, cfg: dict | None = None) -> Readiness:
             df = dl.read_long_table(fin_path, key)
         except (dl.DataError, ValueError) as e:
             rd.add("data files", f"{cc['data_file']}: {e}")
+    if df is not None and prelim:
+        df = add_point_inputs(df, cc)
     if df is not None and cc.get("last_fy") is not None:
         gaps = _financial_gaps(df, cc)
         for g in gaps:
@@ -131,6 +183,12 @@ def check_readiness(key: str, cfg: dict | None = None) -> Readiness:
             st = "no consolidated revenue" if last.empty else last["status"].iloc[0]
             detail = "" if last.empty else f" (diff {last['diff_pct'].iloc[0]:.2f}% vs tolerance {last['tolerance_pct'].iloc[0]}%)"
             rd.add("financials (data_file)", f"segment revenue check for FY{cc['last_fy']}: {st}{detail}")
+    if prelim:
+        p = price or (cc.get("preliminary") or {}).get("price") or {}
+        if p.get("value") in (None, "") or not p.get("date"):
+            rd.add("market price (PRELIMINARY)", "approximate price (INR) and its date: pass --price and --price-date, or set "
+                                                 "preliminary.price in config/companies.yaml. Not invented.")
+        return rd
     if not mkt_path.exists():
         rd.add("data files", f"{cc['market_data_file']} not found: needs POINT rows for {', '.join(MARKET_ITEMS)} "
                              f"(template: data/templates/{key}_market_blank.csv)")
@@ -222,13 +280,16 @@ def write_templates(key: str, out_dir: Path | None = None) -> list[Path]:
     return [fin, mk, pe]
 
 
-def load_bundle(key: str, cfg: dict | None = None) -> ModelBundle:
+def load_bundle(key: str, cfg: dict | None = None, preliminary: bool | None = None,
+                price: dict | None = None) -> ModelBundle:
     """Build the ModelBundle from real files. Raises with the full gap list if anything is missing."""
-    rd = check_readiness(key, cfg)
+    rd = check_readiness(key, cfg, preliminary, price)
     if not rd.ready:
         raise IncompleteInputs(rd)
-    cc = dl.company_config(key, cfg)
+    cc = effective_config(key, cfg, preliminary)
     df = dl.read_long_table(_path(cc["data_file"]), key)
+    if cc.get("_preliminary"):
+        return _load_preliminary(key, cc, df, price)
     mk = dl.read_long_table(_path(cc["market_data_file"]), key)
 
     def m(item):
@@ -252,6 +313,28 @@ def load_bundle(key: str, cfg: dict | None = None) -> ModelBundle:
         tolerances=dict(cc["tolerances"]), run_date=dt.date.today().isoformat())
 
 
+def _load_preliminary(key: str, cc: dict, df: pd.DataFrame, price: dict | None) -> ModelBundle:
+    pre = cc["preliminary"]
+    p = price or pre["price"]
+    asof = cc["assumptions_as_of"]
+    df = add_point_inputs(df, cc)
+    ill = lambda k, v, note: {"value": v, "source": f"ILLUSTRATIVE ASSUMPTION ({note}); not measured", "date": asof}
+    m = pre["market"]
+    a = cc["assumptions"]
+    ass = lambda k: {"value": a[k]["value"], "source": f"ASSUMPTION {a[k].get('ref', '')} ILLUSTRATIVE: notes/assumptions.md", "date": asof}
+    return ModelBundle(
+        company_name=cc["name"], currency=cc["currency"], units=cc["units"], is_test=False, cc=cc, df=df,
+        market={"price": float(p["value"]), "valuation_date": str(p["date"]),
+                "source": "APPROXIMATE price supplied by the user (not sourced from an exchange)", "date": str(p["date"])},
+        wacc_inputs={"rf": ill("rf", m["rf"], "risk-free rate"), "erp": ill("erp", m["erp"], "equity risk premium"),
+                     "beta": ill("beta", m["beta"], "assumed beta, not a regression"),
+                     "beta_se": ill("beta_se", m["beta_se"], "assumed"), "kd_pre_tax": ass("cost_of_debt_pretax")},
+        scenario={"revenue_cagr": ass("base_case_revenue_cagr"), "terminal_ebit_margin": ass("base_case_terminal_ebit_margin")},
+        peers=pd.DataFrame(columns=wacc_mod.PEER_COLUMNS), mc_spec=mc.spec_from_config(cc),
+        steps=dict(cc["sensitivity_steps"]), tolerances=dict(cc["tolerances"]), run_date=dt.date.today().isoformat(),
+        label=cc["_label"], placeholders=tuple(pre["point_inputs"]))
+
+
 class IncompleteInputs(RuntimeError):
     def __init__(self, readiness: Readiness):
         super().__init__(readiness.text())
@@ -266,6 +349,6 @@ if __name__ == "__main__":
         for p in write_templates(key):
             print("wrote", p.relative_to(ROOT))
     else:
-        r = check_readiness(key)
+        r = check_readiness(key, preliminary="--preliminary" in sys.argv)
         print(r.text())
         raise SystemExit(0 if r.ready else 2)

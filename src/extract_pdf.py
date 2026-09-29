@@ -263,7 +263,10 @@ def write_outputs(key: str, spec: dict, recs: list[Rec], nf: list[Rec], out_csv:
     rows = []
     filled = {(r.line_item, r.period_type, r.period_end): r for r in recs if r.status == "FILLED"}
     base = cb.template_rows(key, {**cc, "last_fy": max(int(r.period_end[:4]) for r in recs if r.period_type == "FY")})
+    latest_end = max(r.period_end for r in recs)          # point-in-time items are dated at the latest balance sheet
     for row in base:
+        if not row["period_end"]:
+            row["period_end"] = latest_end
         if row["line_item"] == dl.ELIMINATION_ITEM:
             continue                                   # external-customer revenue basis: no eliminations line
         r = filled.pop((row["line_item"], row["period_type"], row["period_end"]), None)
