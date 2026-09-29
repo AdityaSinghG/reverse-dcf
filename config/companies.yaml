@@ -1,0 +1,83 @@
+# Config-driven company definitions. Adding a company = adding a block here + its data files.
+# No financial NUMBERS live in this file. Numbers live in data/raw/<key>_financials.csv
+# (tidy long format, every row carries source + source_date). Judgement calls live in
+# notes/assumptions.md and are referenced by id from `assumptions:` below.
+
+defaults:
+  forecast_years: 10            # explicit forecast horizon (project spec)
+  units: "INR crore"            # reporting unit unless a company overrides
+  # Line items every company must supply (loader flags any that are missing).
+  required_line_items:
+    income_statement:
+      - revenue_from_operations
+      - total_expenses
+      - depreciation_amortisation
+      - finance_costs
+      - other_income
+      - profit_before_tax
+      - tax_expense
+      - net_profit
+    balance_sheet:
+      - cash_and_cash_equivalents
+      - bank_balances_other
+      - current_investments
+      - non_current_investments
+      - borrowings
+      - lease_liabilities
+      - non_controlling_interest
+      - total_equity
+      - total_assets
+    cash_flow:
+      - cfo
+      - capex_ppe_intangibles
+    share_data:
+      - shares_outstanding_basic
+      - shares_outstanding_diluted   # incl. ESOP/dilutive instruments; needed for per-share value
+
+companies:
+  eternal:
+    name: "Eternal Ltd (formerly Zomato Ltd)"
+    ticker: "ETERNAL"
+    exchange: "NSE"
+    country: "India"
+    currency: "INR"
+    statements: "consolidated"
+    fiscal_year_end_month: 3          # March
+    first_fy: 2022                    # first fiscal year to load (FY2022 = year ended 31-Mar-2022)
+    last_fy: null                     # set to latest reported FY once data file is filled
+    data_file: "data/raw/eternal_financials.csv"
+    market_data_file: "data/raw/eternal_market.csv"     # price, shares, valuation date (see notes/SOURCES_NEEDED.md)
+    segments:                         # names must match latest filing's segment note; verify before use
+      - food_delivery
+      - quick_commerce                # Blinkit
+      - hyperpure
+      - going_out
+    benchmarks:
+      market_index: "NIFTY 50"        # beta regression index
+      risk_free: "India 10Y G-Sec yield"
+      erp_source: "Damodaran country ERP (India)"
+      peers:
+        - {name: "Swiggy Ltd", ticker: "SWIGGY", exchange: "NSE", role: "direct domestic peer"}
+        - {name: "DoorDash Inc", ticker: "DASH", exchange: "NASDAQ", role: "mature global delivery"}
+        - {name: "Meituan", ticker: "3690", exchange: "HKEX", role: "mature global local-services"}
+    # Judgement inputs: value stays null until YOU set it; each maps to an entry in notes/assumptions.md
+    assumptions:
+      terminal_growth: {value: null, ref: "A1"}
+      terminal_ebit_margin_range: {value: null, ref: "A2"}
+      sales_to_capital: {value: null, ref: "A3"}
+      cost_of_debt_pretax: {value: null, ref: "A4"}
+      target_debt_weight: {value: null, ref: "A5"}
+      beta_method: {value: null, ref: "A6"}
+      tax_rate_terminal: {value: null, ref: "A7"}
+
+  # Second company, added later with NO code changes. Left disabled as a shape example only.
+  # costco:
+  #   name: "Costco Wholesale Corp"
+  #   ticker: "COST"
+  #   exchange: "NASDAQ"
+  #   country: "United States"
+  #   currency: "USD"
+  #   units: "USD million"
+  #   statements: "consolidated"
+  #   fiscal_year_end_month: 8        # Sunday nearest 31 Aug: verify in 10-K
+  #   ...
