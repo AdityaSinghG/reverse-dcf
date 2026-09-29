@@ -36,6 +36,16 @@ and `locator` (page / note / table). Amounts in INR crore as reported.
 Terminal growth, terminal EBIT margin range, sales-to-capital, target capital structure, beta method,
 cost of debt if debt is immaterial. These are ASSUMPTIONS A1-A7 and are still blank in `config/companies.yaml`.
 
+## M2 additions (new required lines)
+| # | What | Where in the filing | Used for |
+|---|------|---------------------|----------|
+| E1 | `unabsorbed_tax_losses`: AMOUNT of carried-forward business losses and unabsorbed depreciation (and years of expiry) | Income-tax / deferred-tax note in the annual report | Opening NOL pool (A10). If the note only gives the deferred tax asset, tell me and we will gross it up, not guess |
+| E2 | `share_based_payment_expense`: ESOP charge for each FY | Employee benefit expense note / ESOP note | Confirms SBC is inside `total_expenses` (A11) |
+| E3 | Diluted share count, in crore shares, with the basis stated in `notes` | EPS note (Ind AS 33) and ESOP note | Per-share value (A11). Unit column must read `crore shares` |
+| E4 | Segment revenue rows: `segment_revenue__food_delivery`, `__quick_commerce`, `__hyperpure`, `__going_out`, `__eliminations` | Segment note | Validated to sum to consolidated revenue (A18) |
+| E5 | Peer beta inputs file `data/raw/peers_beta_inputs.csv` with columns `name,levered_beta,debt,market_cap,tax_rate,source,source_date` (debt incl. leases) | Peer filings + price data, or Damodaran betas (state which) | Beta sanity check (A12) |
+| E6 | Price files with header lines `# source: ...` and `# retrieved: YYYY-MM-DD`, then `date,close` | NSE downloads | Beta regression |
+
 ## Required line items
 Listed in `config/companies.yaml` under `defaults.required_line_items`. Run
 `python -m src.data_loader eternal` after filling data and setting `last_fy`; it prints every missing cell.

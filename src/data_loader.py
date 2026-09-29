@@ -127,6 +127,76 @@ def missing_report(df: pd.DataFrame, company_cfg: dict) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=["line_item", "fy"])
 
 
+SEGMENT_PREFIX = "segment_revenue__"
+ELIMINATION_ITEM = SEGMENT_PREFIX + "eliminations"   # inter-segment eliminations / unallocated (signed)
+
+
+def validate_segments(df: pd.DataFrame, company_cfg: dict,
+                      tolerance_pct: float | None = None) -> pd.DataFrame:
+    """Check sum(segment revenue) (+ eliminations line, if any) == consolidated revenue.
+
+    Segment rows use line_item `segment_revenue__<segment>`; inter-segment eliminations use
+    `segment_revenue__eliminations` (negative). One output row per (period_type, period_end)
+    that has consolidated revenue or segment rows. status is one of:
+      OK, MISMATCH, NO_CONSOLIDATED, NO_SEGMENT_DATA, UNKNOWN_SEGMENT
+    Anything other than OK should be resolved before the segment view is used.
+    """
+    tol = company_cfg.get("segment_tolerance_pct", 0.5) if tolerance_pct is None else tolerance_pct
+    known = set(company_cfg.get("segments", []))
+    v = df[df["value"].notna()]
+    seg = v[v["line_item"].str.startswith(SEGMENT_PREFIX)]
+    cons = v[v["line_item"] == "revenue_from_operations"]
+    keys = sorted(set(zip(seg["period_type"], seg["period_end"])) |
+                  set(zip(cons["period_type"], cons["period_end"])))
+    rows = []
+    for ptype, pend in keys:
+        s_rows = seg[(seg["period_type"] == ptype) & (seg["period_end"] == pend)]
+        c_rows = cons[(cons["period_type"] == ptype) & (cons["period_end"] == pend)]
+        consolidated = float(c_rows["value"].iloc[0]) if len(c_rows) else float("nan")
+        seg_sum = float(s_rows["value"].sum()) if len(s_rows) else float("nan")
+        names = {i[len(SEGMENT_PREFIX):] for i in s_rows["line_item"]} - {"eliminations"}
+        unknown = sorted(names - known) if known else []
+        if not len(s_rows):
+            status, diff = "NO_SEGMENT_DATA", float("nan")
+        elif not len(c_rows):
+            status, diff = "NO_CONSOLIDATED", float("nan")
+        else:
+            diff = (seg_sum - consolidated) / consolidated * 100.0
+            status = "OK" if abs(diff) <= tol else "MISMATCH"
+        if unknown:
+            status = "UNKNOWN_SEGMENT"
+        rows.append({"period_type": ptype, "period_end": pend, "segment_sum": seg_sum,
+                     "consolidated": consolidated, "diff_pct": diff,
+                     "tolerance_pct": tol, "status": status,
+                     "unknown_segments": ",".join(unknown)})
+    return pd.DataFrame(rows, columns=["period_type", "period_end", "segment_sum", "consolidated",
+                                       "diff_pct", "tolerance_pct", "status", "unknown_segments"])
+
+
+def latest_value(df: pd.DataFrame, item: str, period_type: str | None = None):
+    """Most recent populated value of a line item -> (value, period_end, source).
+    Raises if none: never defaults."""
+    v = df[(df["line_item"] == item) & df["value"].notna()]
+    if period_type:
+        v = v[v["period_type"] == period_type]
+    if v.empty:
+        raise DataError(f"no populated value for '{item}'")
+    r = v.sort_values("period_end").iloc[-1]
+    return float(r["value"]), r["period_end"], r["source"]
+
+
+def ltm_sum(df: pd.DataFrame, item: str) -> float:
+    """Sum of the latest four consecutive quarters (period_type Q) of a flow item."""
+    q = df[(df["line_item"] == item) & (df["period_type"] == "Q") & df["value"].notna()]
+    q = q.sort_values("period_end").tail(4)
+    if len(q) < 4:
+        raise DataError(f"LTM for '{item}' needs 4 quarters, have {len(q)}")
+    gaps = q["period_end"].diff().dt.days.dropna()
+    if ((gaps < 80) | (gaps > 100)).any():
+        raise DataError(f"LTM quarters for '{item}' are not consecutive: {q['period_end'].dt.date.tolist()}")
+    return float(q["value"].sum())
+
+
 def build_processed(company: str, out_dir: Path | None = None) -> Path:
     """Validate raw data, write data/processed/<company>_annual.csv, return its path."""
     cc = company_config(company)

@@ -251,3 +251,57 @@ def build_bridge(values: dict, weights: dict, claims: Sequence[str]) -> dict:
             raise ValuationError(f"bridge claim item '{item}' has no value")
         lines[item] = -float(values[item])
     return lines
+
+
+# --------------------------------------------------------------------------
+# Assemble DCFInputs from loaded data + config (no defaults for judgement inputs)
+# --------------------------------------------------------------------------
+def inputs_from_data(df: pd.DataFrame, cc: dict, *, wacc: float, revenue_cagr: float,
+                     terminal_ebit_margin: float, base: str = "FY", **overrides) -> DCFInputs:
+    """Build DCFInputs for a company. Data comes from the tidy table `df`; judgement inputs
+    (terminal growth, S2C, tax rates) must be set in config or the call raises, listing them."""
+    from src.data_loader import DataError, latest_value, ltm_sum
+
+    a = cc.get("assumptions", {})
+    need = ["terminal_growth", "sales_to_capital", "tax_rate_statutory", "tax_rate_terminal"]
+    unset = [k for k in need if k not in overrides and a.get(k, {}).get("value") is None]
+    if unset:
+        raise DataError(f"assumptions not set in config (see notes/assumptions.md): {unset}")
+    pick = lambda k: overrides.get(k, a.get(k, {}).get("value"))
+
+    if base == "LTM":
+        rev = ltm_sum(df, "revenue_from_operations")
+        exp_ = ltm_sum(df, "total_expenses")
+        fin = ltm_sum(df, "finance_costs")
+    elif base == "FY":
+        rev = latest_value(df, "revenue_from_operations", "FY")[0]
+        exp_ = latest_value(df, "total_expenses", "FY")[0]
+        fin = latest_value(df, "finance_costs", "FY")[0]
+    else:
+        raise DataError("base must be 'FY' or 'LTM'")
+    margin = operating_ebit(rev, exp_, fin) / rev
+
+    b = cc["bridge"]
+    items = list(b["asset_weights"]) + list(b["claims"])
+    values = {i: latest_value(df, i)[0] for i in items}
+    bridge = build_bridge(values, b["asset_weights"], b["claims"])
+
+    shares, _, _ = latest_value(df, "shares_outstanding_diluted")
+    units = set(df.loc[(df["line_item"] == "shares_outstanding_diluted") & df["value"].notna(), "unit"])
+    want = cc.get("share_unit")
+    if want and units != {want}:
+        raise DataError(f"diluted shares unit {sorted(units)} != config share_unit '{want}' "
+                        "(amounts and shares must share a scale)")
+    nol = latest_value(df, "unabsorbed_tax_losses")[0]
+    fc = cc.get("forecast", {})
+    return DCFInputs(
+        base_revenue=rev, base_ebit_margin=margin, revenue_cagr=revenue_cagr,
+        terminal_growth=pick("terminal_growth"), terminal_ebit_margin=terminal_ebit_margin,
+        wacc=wacc, sales_to_capital=pick("sales_to_capital"),
+        tax_rate=pick("tax_rate_statutory"), tax_rate_terminal=pick("tax_rate_terminal"),
+        opening_nol=nol, years=cc.get("forecast_years", 10),
+        margin_ramp_years=fc.get("margin_ramp_years"),
+        growth_profile=fc.get("growth_profile", "constant"),
+        mid_year=cc.get("discounting", {}).get("mid_year", False),
+        bridge=bridge, diluted_shares=shares,
+    )

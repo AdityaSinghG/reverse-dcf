@@ -6,6 +6,30 @@
 defaults:
   forecast_years: 10            # explicit forecast horizon (project spec)
   units: "INR crore"            # reporting unit unless a company overrides
+  share_unit: "crore shares"    # must equal the `unit` on share rows so amounts/shares scales agree
+  segment_tolerance_pct: 0.5    # |sum(segments) - consolidated revenue| allowed, % of consolidated
+  # Equity bridge (A8, A9). Weights: fraction of each ASSET counted (1 = liquid, 0 = excluded).
+  # Claims are deducted at book value. Leases are deducted because EBIT is pre-lease-interest.
+  bridge:
+    asset_weights:
+      cash_and_cash_equivalents: 1
+      bank_balances_other: 1
+      current_investments: 1
+      non_current_investments: 0    # ASSUMPTION A8: excluded until the note is reviewed
+    claims:
+      - borrowings
+      - lease_liabilities
+      - non_controlling_interest
+  discounting:
+    mid_year: false                 # A13
+  forecast:
+    growth_profile: "constant"      # A14: "constant" or "linear_fade"
+    margin_ramp_years: null         # null = reach terminal margin in year N
+  beta:                             # A6 / A12
+    index: "NIFTY 50"
+    window_years: 2
+    frequency: "W"                  # weekly
+    blume_adjust: false
   # Line items every company must supply (loader flags any that are missing).
   required_line_items:
     income_statement:
@@ -14,6 +38,7 @@ defaults:
       - depreciation_amortisation
       - finance_costs
       - other_income
+      - share_based_payment_expense  # ESOP cost; must already sit inside total_expenses (verify)
       - profit_before_tax
       - tax_expense
       - net_profit
@@ -27,6 +52,8 @@ defaults:
       - non_controlling_interest
       - total_equity
       - total_assets
+    tax:
+      - unabsorbed_tax_losses        # amount of carried-forward losses (not the deferred-tax effect)
     cash_flow:
       - cfo
       - capex_ppe_intangibles
@@ -63,11 +90,11 @@ companies:
     # Judgement inputs: value stays null until YOU set it; each maps to an entry in notes/assumptions.md
     assumptions:
       terminal_growth: {value: null, ref: "A1"}
+      tax_rate_statutory: {value: null, ref: "A7"}
       terminal_ebit_margin_range: {value: null, ref: "A2"}
       sales_to_capital: {value: null, ref: "A3"}
       cost_of_debt_pretax: {value: null, ref: "A4"}
       target_debt_weight: {value: null, ref: "A5"}
-      beta_method: {value: null, ref: "A6"}
       tax_rate_terminal: {value: null, ref: "A7"}
 
   # Second company, added later with NO code changes. Left disabled as a shape example only.
