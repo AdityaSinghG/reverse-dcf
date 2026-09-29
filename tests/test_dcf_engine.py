@@ -127,3 +127,27 @@ def test_mid_year_uplift_through_engine():
 def test_marginal_roic_reported():
     res = dcf.run_dcf(base())
     assert res.terminal_marginal_roic == pytest.approx(2.0 * 0.20 * 0.75)
+
+
+@pytest.mark.parametrize("kw", [
+    {},                                                                    # steady state
+    dict(base_ebit_margin=-0.10, terminal_ebit_margin=0.15, revenue_cagr=0.18),          # loss start
+    dict(base_ebit_margin=-0.30, terminal_ebit_margin=0.08, opening_nol=800.0, wacc=0.11,
+         sales_to_capital=2.0),                                            # loss pool in use
+    dict(base_ebit_margin=-0.50, terminal_ebit_margin=-0.5 + 1e-9, terminal_growth=0.02,
+         revenue_cagr=0.02),                                               # pool never exhausted
+    dict(opening_nol=5000.0, base_ebit_margin=0.05, terminal_ebit_margin=0.20),          # big pool, profitable
+    dict(growth_profile="linear_fade", revenue_cagr=0.30, mid_year=True, margin_ramp_years=6,
+         base_ebit_margin=-0.15, opening_nol=300.0),
+    dict(revenue_cagr=-0.03, terminal_growth=0.01, tax_rate_terminal=0.30),              # shrinking revenue
+    dict(bridge={"cash": 250.0, "debt": -40.0, "lease": -15.0}, diluted_shares=7.3),
+])
+def test_fast_path_equals_full_path_exactly(kw):
+    inp = base(**kw)
+    full = dcf.run_dcf(inp)
+    fast = dcf.run_dcf(inp, build_table=False)
+    assert fast.forecast is None and full.forecast is not None
+    assert fast.value_per_share == full.value_per_share            # bit-for-bit, not approx
+    assert fast.enterprise_value == full.enterprise_value
+    assert fast.pv_residual_nol == full.pv_residual_nol
+    assert dcf.value_per_share(inp) == full.value_per_share
