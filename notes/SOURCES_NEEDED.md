@@ -46,6 +46,8 @@ cost of debt if debt is immaterial. These are ASSUMPTIONS A1-A7 and are still bl
 | E5 | Peer beta inputs file `data/raw/peers_beta_inputs.csv` with columns `name,levered_beta,debt,market_cap,tax_rate,source,source_date` (debt incl. leases) | Peer filings + price data, or Damodaran betas (state which) | Beta sanity check (A12) |
 | E6 | Price files with header lines `# source: ...` and `# retrieved: YYYY-MM-DD`, then `date,close` | NSE downloads | Beta regression |
 
+| E7 | ESOP audit lines: `esop_options_outstanding_vested`, `esop_options_outstanding_unvested`, `esop_unamortised_cost`, `esop_pool_ungranted`, `esop_trust_shares` | ESOP note and shareholding pattern | Avoids SBC/dilution double count (A11b) |
+
 ## Required line items
 Listed in `config/companies.yaml` under `defaults.required_line_items`. Run
 `python -m src.data_loader eternal` after filling data and setting `last_fy`; it prints every missing cell.
