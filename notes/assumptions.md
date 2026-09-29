@@ -42,6 +42,26 @@ Every judgement call has an ID, a one-line rationale, and where it is enforced.
 | A21 | Grid scan (400 points) then brentq inside each sign change; several roots are all returned, none chosen | Loss pool + reinvestment can make value non-monotone in growth (test `test_multiple_roots_reported_from_loss_pool_case`). Unique-root assumptions would silently give a wrong "implied" number. |
 | A22 | Frontier: for each CAGR, solve terminal margin. Points with no or several roots stay in the table with a status | Gaps in the curve are visible, not interpolated. |
 
+## B3. Monte Carlo (M4). ALL distribution parameters are ASSUMPTIONS for you to set
+
+Types/parameters live in `config/companies.yaml > defaults.monte_carlo.distributions` and are `null`
+until you set them (the run refuses otherwise). They must come from history, peers or theory and must
+NOT be tuned until the output looks right or the price is matched: that makes P(value >= price) circular.
+
+| ID | Driver | Proposed type | What to anchor low / mode / high (or mean / sd) to |
+|----|--------|---------------|-----------------------------------------------------|
+| A23 | Revenue CAGR, 10y | triangular | worst / base / best 10-year growth: historical CAGR decay, mature-peer trajectories (C1-C3), TAM arguments |
+| A24 | Terminal EBIT margin | triangular | peer and mature-platform margin range (C1-C4); bounded, right-skewed if you believe in scale economics |
+| A25 | WACC | truncated normal | mean = CAPM WACC; sd from beta standard error (`BetaResult.std_err` x ERP) and ERP uncertainty; truncated to a plausible band |
+| A25b | Terminal growth | triangular | upper bound at INR rf / long-run nominal GDP; g < WACC is enforced separately |
+| A26 | Correlation of CAGR and terminal margin | +0.3 (documented default) | Scale platforms tend to have good and bad cases move together (operating leverage); the default is mild. The report ALWAYS shows results at 0 and at this value using identical random numbers. Set to 0 or negative if you think growth is bought with margin. Only this pair is correlated; WACC and g are independent of everything (a stated simplification). Gaussian copula, so marginals are unchanged. |
+| A27 | Seed and n | seed 20250101 (arbitrary), n = 10,000 | Reproducibility; the seed is printed in every output. |
+
+Mechanics you can defend: g >= WACC draws are rejected and redrawn (not truncated), and the count, share
+and the before/after mean of WACC and g are reported so any bias is visible. Any draw that errors inside
+the DCF is counted by error type and excluded, never dropped silently (`n_valid + n_errors = n`).
+P(value >= price) is reported with its binomial standard error.
+
 ## C. Not yet built (M2 scope decision needed, see chat)
 The engine runs on consolidated revenue and margin. A per-segment revenue and margin build (food delivery,
 Blinkit, Hyperpure, going-out) is not implemented; the segment data is currently validated and available
