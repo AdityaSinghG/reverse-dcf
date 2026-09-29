@@ -19,3 +19,5 @@ excel/*.xlsx
 !excel/.gitkeep
 # Synthetic/test chart output is never a deliverable
 plots/test_*
+excel/**/*.xlsx
+excel/**/*.pdf
