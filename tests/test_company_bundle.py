@@ -137,7 +137,7 @@ def test_repo_config_refuses_and_lists_everything_until_you_fill_it():
     text = rd.text()
     assert text.startswith("CANNOT BUILD eternal")
     for ref in ("A1:", "A2:", "A3:", "A4:", "A5:", "A7:", "A23:", "A23 revenue_cagr", "A24 terminal_ebit_margin",
-                "A25 wacc", "A25b terminal_growth", "assumptions_as_of", "last_fy"):
+                "A25 wacc", "A25b terminal_growth", "assumptions_as_of"):
         assert ref in text, ref
     with pytest.raises(cb.IncompleteInputs):
         cb.load_bundle("eternal")

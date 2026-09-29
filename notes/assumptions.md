@@ -72,6 +72,39 @@ P(value >= price) is reported with its binomial standard error.
 | A31 | WACC x g grid is live closed-form when the growth profile is constant (years 1-10 FCFF do not depend on WACC or g); otherwise static. CAGR x margin grid is always static | A per-cell closed form exists only where the FCFF row is independent of the varied inputs. Centre cells are checked against the live model. |
 | A32 | Excel is verified by LibreOffice headless recalculation and a cell-level comparison with Python (tolerance 0.1%) | If they differ, neither side is adjusted to fit; the differences are shown. |
 
+## PRELIMINARY - ILLUSTRATIVE ASSUMPTIONS (tonight's first pass; NOT evidence-based)
+
+Switch: `--preliminary` on the CLI or `preliminary.enabled: true` in `config/companies.yaml`. Every value lives in the
+`preliminary:` block of the Eternal config and is a ROUND ILLUSTRATIVE number for you to edit or replace. Nothing here
+is derived from history, peers or the price. With the mode off, the blank A1-A7 / A23-A27 gates apply again and the run
+refuses. Every printed result, chart title, Excel sheet and the README carry the label.
+
+| ID | Value | ILLUSTRATIVE rationale (one line, not evidence) |
+|----|-------|--------------------------------------------------|
+| A1 | terminal growth 5.0% | Round number below the assumed 7% risk-free rate; a placeholder for long-run nominal INR growth. |
+| A2 | terminal EBIT margin range 5-12%, base 8% | Round band for a mature low-margin consumer platform on REPORTED revenue; the inventory-led basis makes any margin here highly uncertain. |
+| A3 | sales-to-capital 3.0 | Round guess for a store/warehouse-heavy model; not taken from any industry table. |
+| A4 | pre-tax cost of debt 9% | Round figure; immaterial while borrowings are assumed nil. |
+| A5 | target debt weight 5% | Round figure standing in for lease liabilities as a share of capital; price-independent so WACC does not move with the placeholder price. |
+| A6 | beta 1.2, s.e. 0.25 | ASSUMED input, not a regression (no price history supplied). |
+| B3/B4 | risk-free 7.0%, ERP 7.0% | Round placeholders, not read from RBI/Damodaran. |
+| A7 | statutory and terminal tax 25% | Round figure near the Indian statutory rate; not checked against the tax note. |
+| A23 | base-case revenue CAGR 20% (Monte Carlo triangular 10/20/30%) | Round mid-point for 10 years of growth off reported LTM revenue; not fitted to history or to the price. |
+| A24 | terminal margin triangular 4/8/12% | Same band as A2. |
+| A25 | WACC ~ truncated normal, mean 15%, sd 1%, 12-18% | Centred near the CAPM result of the placeholder inputs. |
+| A25b | terminal growth triangular 4/5/6% | Brackets A1. |
+| A26 | correlation CAGR/margin +0.3 | Documented default from earlier in this file. |
+| A27 | seed 20250101, n 10,000 | Arbitrary, for reproducibility. |
+
+Non-assumption placeholders (also in the `preliminary:` block, each labelled as such in the workbook):
+shares 921 crore (APPROXIMATE: paid-up capital INR 921 crore / face value INR 1, PDF p.25, no ESOP dilution);
+price (you supply, approximate, never invented); opening tax-loss pool 0 (not in the filing; credits no shield);
+unamortised ESOP cost 0 (not in the filing; the ESOP-overlap check is reported NOT ASSESSED); borrowings 0 (no
+borrowings line on the balance sheet, PDF p.18; unconfirmed against the notes).
+Bridge as at 30-Jun-2026 (PDF p.18, IMAGE_READ): cash + bank balances + current investments at 100%, non-current
+investments at 0% (conservative placeholder), lease liabilities (non-current + current) as debt, NCI at book (negative).
+Base period: LTM = FY26 + Q1FY27 - Q1FY26; LTM operating EBIT = PBT + finance costs - other income (SBC expensed).
+
 ## C. Not yet built (M2 scope decision needed, see chat)
 The engine runs on consolidated revenue and margin. A per-segment revenue and margin build (food delivery,
 Blinkit, Hyperpure, going-out) is not implemented; the segment data is currently validated and available
