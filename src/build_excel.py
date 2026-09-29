@@ -96,7 +96,8 @@ def python_model(b: ModelBundle) -> dict:
     w = b.wacc_inputs
     ke = wacc_mod.cost_of_equity(w["rf"]["value"], w["beta"]["value"], w["erp"]["value"])
     kd = wacc_mod.after_tax_cost_of_debt(w["kd_pre_tax"]["value"], tax)
-    we, wd = wacc_mod.capital_weights(price * shares, debt)
+    tdw = cc.get("assumptions", {}).get("target_debt_weight", {}).get("value")   # A5; None -> market weights
+    we, wd = (1.0 - tdw, tdw) if tdw is not None else wacc_mod.capital_weights(price * shares, debt)
     wacc = wacc_mod.wacc(ke, kd, we, wd)
     inp = dcf.inputs_from_data(
         df, cc, wacc=wacc, revenue_cagr=b.scenario["revenue_cagr"]["value"],
@@ -345,6 +346,11 @@ def build_workbook(b: ModelBundle, path: str | Path) -> BuildInfo:
     I.add("beta", "Regression beta (window/index per A6)", w["beta"]["value"], "x", w["beta"]["source"], w["beta"]["date"], fmt="0.00")
     I.add("beta_se", "Beta standard error", w["beta_se"]["value"], "x", w["beta_se"]["source"], w["beta_se"]["date"], fmt="0.00")
     I.add("kd", "Pre-tax cost of debt", w["kd_pre_tax"]["value"], "ratio", w["kd_pre_tax"]["source"], w["kd_pre_tax"]["date"], fmt=PCT)
+    tdw = cc.get("assumptions", {}).get("target_debt_weight", {}).get("value")
+    if tdw is not None:
+        I.add("target_debt_weight", "Target debt weight D/V", tdw, "ratio",
+              f"ASSUMPTION {cc['assumptions']['target_debt_weight'].get('ref', 'A5')}: notes/assumptions.md", today,
+              "ASSUMPTION", PCT)
     I.add("z", "z multiple for beta confidence interval", T["beta_z"], "x", "standard normal, 97.5th percentile",
           today, "CONSTANT", "0.00")
     I.section("4. Balance sheet items for the equity bridge (latest reported)")
@@ -529,9 +535,11 @@ def build_workbook(b: ModelBundle, path: str | Path) -> BuildInfo:
              ("borr", "Borrowings", f"={A['bs_borrowings']}", NUM, ""),
              ("lease", "Lease liabilities", f"={A['bs_lease_liabilities']}", NUM, ""),
              ("D", "Debt incl. leases", "=B16+B17", NUM, ""),
-             ("we", "Equity weight E/V", "=B15/(B15+B18)", PCT, ""),
-             ("wd", "Debt weight D/V", "=B18/(B15+B18)", PCT, ""),
-             (None, None, None, None, None),
+             ("we", "Equity weight E/V", "=B15/(B15+B18)" if tdw is None else "=1-B20", PCT,
+              "market values" if tdw is None else "target structure (A5)"),
+             ("wd", "Debt weight D/V", "=B18/(B15+B18)" if tdw is None else f"={A['target_debt_weight']}", PCT, ""),
+             (("wd_mkt", "Market-value D/V (reference)", "=B18/(B15+B18)", PCT, "not used: target weight set (A5)")
+              if tdw is not None else (None, None, None, None, None)),
              ("wacc", "WACC = We x Ke + Wd x Kd(1-t)", "=B19*B7+B20*B11", PCT, "")]
     for i, (k, lab, fml, fmt, note) in enumerate(lines, start=4):
         if k is None:
@@ -914,21 +922,39 @@ def verify(recalculated: str | Path, info: BuildInfo, rel_tol: float = 1e-3, abs
     return pd.DataFrame(rows)
 
 
+def build_and_check(bundle: ModelBundle, out: Path):
+    """Build, recalculate with LibreOffice, compare with Python, audit. Returns (info, recalculated, comparison, audit)."""
+    from src import audit_excel
+    out.parent.mkdir(parents=True, exist_ok=True)
+    info = build_workbook(bundle, out)
+    rec = recalculate(out, out.parent / "recalculated")
+    return info, rec, verify(rec, info), audit_excel.audit(rec)
+
+
 if __name__ == "__main__":
     import argparse
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--fixture", action="store_true", help="build the synthetic TEST workbook")
-    ap.add_argument("--out", default="excel/reverse_dcf_TEST.xlsx")
+    ap = argparse.ArgumentParser(description="Build the valuation workbook (never commit the .xlsx).")
+    ap.add_argument("company", nargs="?", help="company key in config/companies.yaml, e.g. eternal")
+    ap.add_argument("--fixture", action="store_true", help="build the synthetic TEST workbook instead")
+    ap.add_argument("--out", default=None)
     a = ap.parse_args()
-    if not a.fixture:
-        raise SystemExit("Real-data build is wired in once data/raw/eternal_financials.csv exists; use --fixture for now.")
-    from tests.fixture_bundle import make_bundle
-    out = Path(a.out)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    info = build_workbook(make_bundle(), out)
-    rec = recalculate(out, out.parent / "recalculated")
-    cmp_ = verify(rec, info)
+    if a.fixture == bool(a.company):
+        raise SystemExit("usage: python -m src.build_excel <company>   |   python -m src.build_excel --fixture")
+    if a.fixture:
+        from tests.fixture_bundle import make_bundle
+        bundle, out = make_bundle(), Path(a.out or "excel/reverse_dcf_TEST.xlsx")
+    else:
+        from src.company_bundle import IncompleteInputs, load_bundle
+        try:
+            bundle = load_bundle(a.company)
+        except IncompleteInputs as e:
+            print(e)
+            raise SystemExit(2)
+        out = Path(a.out or f"excel/reverse_dcf_{a.company}.xlsx")
+    info, rec, cmp_, rep = build_and_check(bundle, out)
     bad = cmp_[~cmp_["ok"]]
     print(f"built {out}; recalculated {rec}; compared {len(cmp_)} cells; mismatches: {len(bad)}")
     if len(bad):
         print(bad.to_string())
+    print(rep.text())
+    raise SystemExit(1 if (len(bad) or rep.errors) else 0)
