@@ -206,3 +206,17 @@ def peer_beta_check(peers: pd.DataFrame, *, target_debt: float, target_equity: f
         "levered_beta": relever_beta(med, target_debt, target_equity, target_tax),
     }
     return pd.concat([out, pd.DataFrame([summary])], ignore_index=True)
+
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) < 3:
+        raise SystemExit("usage: python -m src.wacc <stock_prices.csv> <index_prices.csv> [end_date]. "
+                         "Prints the regression beta (2y weekly) and the window/frequency grid for A6; "
+                         "transcribe beta and beta_se into the market data file with the source noted.")
+    stock, index = load_price_series(sys.argv[1]), load_price_series(sys.argv[2])
+    end = sys.argv[3] if len(sys.argv) > 3 else None
+    r = regression_beta(stock, index, freq="W", window_years=2.0, end=end)
+    print(f"beta {r.beta:.3f}  s.e. {r.std_err:.3f}  R^2 {r.r_squared:.3f}  n {r.n_obs}  "
+          f"{r.start.date()} to {r.end.date()}  ({r.freq}, {r.window_years}y vs {r.index_name})")
+    print(beta_window_grid(stock, index, end=end).to_string(index=False))

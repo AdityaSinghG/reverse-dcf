@@ -20,6 +20,18 @@ defaults:
       - borrowings
       - lease_liabilities
       - non_controlling_interest
+  sensitivity_steps:                # grid spacing (ASSUMPTION: presentation only)
+    wacc: 0.01
+    terminal_growth: 0.005
+    revenue_cagr: 0.02
+    terminal_ebit_margin: 0.02
+  tolerances:                       # workbook check tolerances (fractions)
+    balance_sheet: 0.005
+    value_vs_python: 0.001
+    price_reproduction: 0.001
+    grid_centre: 0.001
+    esop_overlap_flag: 0.02
+    beta_z: 1.96
   discounting:
     mid_year: false                 # A13
   forecast:
@@ -74,6 +86,8 @@ defaults:
       - total_liabilities            # used by the workbook balance check (assets = equity + liabilities)
     tax:
       - unabsorbed_tax_losses        # amount of carried-forward losses (not the deferred-tax effect)
+    esop:
+      - esop_unamortised_cost        # A11b overlap check (point in time)
     cash_flow:
       - cfo
       - capex_ppe_intangibles
@@ -92,6 +106,7 @@ companies:
     fiscal_year_end_month: 3          # March
     first_fy: 2022                    # first fiscal year to load (FY2022 = year ended 31-Mar-2022)
     last_fy: null                     # set to latest reported FY once data file is filled
+    assumptions_as_of: null           # ISO date you set the assumptions below (recorded as their source date)
     data_file: "data/raw/eternal_financials.csv"
     market_data_file: "data/raw/eternal_market.csv"     # price, shares, valuation date (see notes/SOURCES_NEEDED.md)
     segments:                         # names must match latest filing's segment note; verify before use
@@ -110,8 +125,10 @@ companies:
     # Judgement inputs: value stays null until YOU set it; each maps to an entry in notes/assumptions.md
     assumptions:
       terminal_growth: {value: null, ref: "A1"}
+      base_case_revenue_cagr: {value: null, ref: "A23"}        # point estimate feeding the base-case DCF
+      base_case_terminal_ebit_margin: {value: null, ref: "A2"} # point estimate inside the A2 range
       tax_rate_statutory: {value: null, ref: "A7"}
-      terminal_ebit_margin_range: {value: null, ref: "A2"}
+      terminal_ebit_margin_range: {value: null, ref: "A2"}   # [low, high]; shades the frontier plot
       sales_to_capital: {value: null, ref: "A3"}
       cost_of_debt_pretax: {value: null, ref: "A4"}
       target_debt_weight: {value: null, ref: "A5"}
