@@ -101,7 +101,7 @@ class DCFInputs:
 @dataclass
 class DCFResult:
     inputs: DCFInputs
-    forecast: pd.DataFrame
+    forecast: pd.DataFrame | None     # None when run with build_table=False (speed path)
     pv_explicit: float
     terminal_fcff: float
     terminal_value: float
@@ -159,7 +159,7 @@ def tax_schedule(ebit: np.ndarray, tax_rate: float, opening_nol: float):
     return tax, o, used, added, c
 
 
-def run_dcf(inp: DCFInputs) -> DCFResult:
+def run_dcf(inp: DCFInputs, build_table: bool = True) -> DCFResult:
     n = inp.years
     check_growth_vs_wacc(inp.wacc, inp.terminal_growth)
     if inp.sales_to_capital <= 0:
@@ -197,7 +197,7 @@ def run_dcf(inp: DCFInputs) -> DCFResult:
     equity = ev + sum(inp.bridge.values())
     marginal_roic = inp.sales_to_capital * inp.terminal_ebit_margin * (1.0 - inp.tax_rate_terminal)
 
-    table = pd.DataFrame({
+    table = None if not build_table else pd.DataFrame({
         "year": np.arange(0, n + 1),
         "revenue": np.r_[inp.base_revenue, revenue],
         "growth": np.r_[np.nan, g],
@@ -226,7 +226,7 @@ def run_dcf(inp: DCFInputs) -> DCFResult:
 
 def value_per_share(inp: DCFInputs) -> float:
     """Thin wrapper used by the reverse solver (M3)."""
-    return run_dcf(inp).value_per_share
+    return run_dcf(inp, build_table=False).value_per_share
 
 
 # --------------------------------------------------------------------------

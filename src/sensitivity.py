@@ -44,3 +44,32 @@ def wacc_vs_terminal_g(inp: dcf.DCFInputs, waccs, gs, price: float | None = None
 def cagr_vs_terminal_margin(inp: dcf.DCFInputs, cagrs, margins, price: float | None = None) -> pd.DataFrame:
     """Rows = revenue CAGR, columns = terminal EBIT margin."""
     return two_way(inp, "revenue_cagr", list(cagrs), "terminal_ebit_margin", list(margins), price)
+
+
+def ranges_from_spec(spec, lo_q: float = 0.10, hi_q: float = 0.90) -> dict:
+    """(low, high) per drawn driver = the P10 / P90 of its configured distribution, so the tornado
+    uses the same ASSUMED ranges as the Monte Carlo (never ranges fitted to the price)."""
+    d = spec.dists()
+    return {k: (float(d[k].ppf(lo_q)), float(d[k].ppf(hi_q))) for k in d}
+
+
+def tornado(inp: dcf.DCFInputs, ranges: dict) -> pd.DataFrame:
+    """One-at-a-time value swing: each driver moved to its low and high, others at base.
+    Sorted by absolute swing. NaN where inputs are invalid (g >= WACC)."""
+    base_v = dcf.value_per_share(inp)
+    rows = []
+    for name, (lo, hi) in ranges.items():
+        vals = []
+        for x in (lo, hi):
+            try:
+                vals.append(dcf.value_per_share(inp.with_(**{name: x})))
+            except dcf.ValuationError:
+                vals.append(np.nan)
+        rows.append({"driver": name, "input_low": lo, "input_high": hi,
+                     "value_at_low": vals[0], "value_at_high": vals[1],
+                     "swing": abs(np.nan_to_num(vals[1]) - np.nan_to_num(vals[0]))
+                     if not any(np.isnan(vals)) else np.nan})
+    out = pd.DataFrame(rows).sort_values("swing", ascending=False, na_position="last")
+    out.attrs["base_value"] = base_v
+    out.attrs["held_fixed"] = _fixed(inp, tuple(ranges))
+    return out.reset_index(drop=True)

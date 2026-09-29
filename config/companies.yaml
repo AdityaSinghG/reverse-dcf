@@ -25,6 +25,25 @@ defaults:
   forecast:
     growth_profile: "constant"      # A14: "constant" or "linear_fade"
     margin_ramp_years: null         # null = reach terminal margin in year N
+  # Monte Carlo (M4). ALL parameters are ASSUMPTIONS for you to set (A23-A27). They must be set from
+  # history/peers/theory, never fitted to the market price (circular). Null = run refuses.
+  monte_carlo:
+    n_sims: 10000
+    seed: 20250101                  # recorded in every output; same seed -> identical results
+    correlation_cagr_margin: {value: 0.3, ref: "A26"}   # documented default, see assumptions.md
+    distributions:
+      revenue_cagr:
+        {type: triangular, low: null, mode: null, high: null,
+         rationale: "Bounded, skewed; anchor low/mode/high to worst/base/best 10y growth from history and mature-peer trajectories"}
+      terminal_ebit_margin:
+        {type: triangular, low: null, mode: null, high: null,
+         rationale: "Bounded by peer/mature-platform margin range (sources C1-C4), not by the price"}
+      wacc:
+        {type: truncated_normal, mean: null, sd: null, low: null, high: null,
+         rationale: "Centre on the CAPM WACC; sd reflects beta standard error and ERP uncertainty; truncated to a plausible band"}
+      terminal_growth:
+        {type: triangular, low: null, mode: null, high: null,
+         rationale: "Bounded above by INR risk-free rate / long-run nominal GDP growth"}
   beta:                             # A6 / A12
     index: "NIFTY 50"
     window_years: 2
