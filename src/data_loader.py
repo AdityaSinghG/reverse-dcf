@@ -197,6 +197,27 @@ def ltm_sum(df: pd.DataFrame, item: str) -> float:
     return float(q["value"].sum())
 
 
+def ltm_value(df: pd.DataFrame, item: str) -> float:
+    """Last-twelve-months value of a flow item.
+    Preferred: four consecutive quarters. Otherwise LTM = latest FY + latest quarter - the same quarter a
+    year earlier (needs those three rows). Raises if neither is possible; never estimates."""
+    try:
+        return ltm_sum(df, item)
+    except DataError:
+        pass
+    v = df[(df["line_item"] == item) & df["value"].notna()]
+    fy, q = v[v["period_type"] == "FY"].sort_values("period_end"), v[v["period_type"] == "Q"].sort_values("period_end")
+    if fy.empty or q.empty:
+        raise DataError(f"LTM for '{item}' needs a fiscal year and a later quarter")
+    fy_end, q_end = fy.iloc[-1]["period_end"], q.iloc[-1]["period_end"]
+    if not 0 < (q_end - fy_end).days <= 300:
+        raise DataError(f"latest quarter {q_end.date()} is not within a year after FY end {fy_end.date()} for '{item}'")
+    prior = q[(q["period_end"] - (q_end - pd.DateOffset(years=1))).abs() <= pd.Timedelta(days=5)]
+    if prior.empty:
+        raise DataError(f"no quarter ending near {(q_end - pd.DateOffset(years=1)).date()} (same quarter last year) for '{item}'")
+    return float(fy.iloc[-1]["value"]) + float(q.iloc[-1]["value"]) - float(prior.iloc[-1]["value"])
+
+
 def build_processed(company: str, out_dir: Path | None = None) -> Path:
     """Validate raw data, write data/processed/<company>_annual.csv, return its path."""
     cc = company_config(company)

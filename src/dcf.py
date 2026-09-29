@@ -257,10 +257,10 @@ def build_bridge(values: dict, weights: dict, claims: Sequence[str]) -> dict:
 # Assemble DCFInputs from loaded data + config (no defaults for judgement inputs)
 # --------------------------------------------------------------------------
 def inputs_from_data(df: pd.DataFrame, cc: dict, *, wacc: float, revenue_cagr: float,
-                     terminal_ebit_margin: float, base: str = "FY", **overrides) -> DCFInputs:
+                     terminal_ebit_margin: float, base: str | None = None, **overrides) -> DCFInputs:
     """Build DCFInputs for a company. Data comes from the tidy table `df`; judgement inputs
     (terminal growth, S2C, tax rates) must be set in config or the call raises, listing them."""
-    from src.data_loader import DataError, latest_value, ltm_sum
+    from src.data_loader import DataError, latest_value, ltm_value
 
     a = cc.get("assumptions", {})
     need = ["terminal_growth", "sales_to_capital", "tax_rate_statutory", "tax_rate_terminal"]
@@ -269,10 +269,11 @@ def inputs_from_data(df: pd.DataFrame, cc: dict, *, wacc: float, revenue_cagr: f
         raise DataError(f"assumptions not set in config (see notes/assumptions.md): {unset}")
     pick = lambda k: overrides.get(k, a.get(k, {}).get("value"))
 
+    base = base or cc.get("forecast", {}).get("base", "FY")
     if base == "LTM":
-        rev = ltm_sum(df, "revenue_from_operations")
-        exp_ = ltm_sum(df, "total_expenses")
-        fin = ltm_sum(df, "finance_costs")
+        rev = ltm_value(df, "revenue_from_operations")
+        exp_ = ltm_value(df, "total_expenses")
+        fin = ltm_value(df, "finance_costs")
     elif base == "FY":
         rev = latest_value(df, "revenue_from_operations", "FY")[0]
         exp_ = latest_value(df, "total_expenses", "FY")[0]
