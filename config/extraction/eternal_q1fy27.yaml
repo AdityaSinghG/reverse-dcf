@@ -1,0 +1,36 @@
+# Extraction spec for data/raw/eternal_Q1FY27_results.pdf (text layer only, NO OCR).
+# It says WHERE to read each number (page, line label, column); it contains no numbers.
+# Only the filed statement pages are used (consolidated results p.25, segment note p.26),
+# never the shareholder-letter summary tables or the annexure images (p.9-19).
+company: eternal
+document: eternal_Q1FY27_results.pdf
+source: "eternal_Q1FY27_results.pdf: statement of consolidated unaudited financial results (filed)"
+source_date: "2026-07-22"          # board approval date printed on p.26 (note 1) and p.27
+unit: "INR crore"
+# Column order printed on p.25 and p.26 tables, mapped to periods we load.
+column_order: [Q1FY27, Q4FY26, Q1FY26, FY2026]
+periods:
+  Q1FY27: {period_type: Q,  period_end: "2026-06-30", header: "Quarter ended June 30, 2026 (Unaudited)"}
+  FY2026: {period_type: FY, period_end: "2026-03-31", header: "Year ended March 31, 2026 (Audited)"}
+take_columns: [Q1FY27, FY2026]
+targets:
+  - {item: revenue_from_operations, page: 25, statement: IS, label: 'Revenue from operations'}
+  - {item: other_income, page: 25, statement: IS, label: 'Other income'}
+  - {item: total_expenses, page: 25, statement: IS, label: 'Total ex\S*enses'}
+  - {item: finance_costs, page: 25, statement: IS, label: 'Finance costs'}
+  - {item: depreciation_amortisation, page: 25, statement: IS, label: 'Depreciation and amortisation expenses'}
+  - {item: profit_before_tax, page: 25, statement: IS, label: 'Profit before tax'}
+  - {item: net_profit, page: 25, statement: IS, label: 'Profit for the period'}
+  - {item: share_based_payment_expense, page: 26, statement: SEG, label: 'Less: share based payment expense'}
+derived:                             # sums of two printed lines; flagged DERIVED in the sheet
+  - {item: tax_expense, page: 25, statement: IS, parts: ['C\w*nt tax', 'Deferred tax'], note: "current tax + deferred tax (no total line is printed)"}
+segments:                            # p.26 "Revenue from operations (external customers)" block
+  page: 26
+  start: 'external customers'
+  end: '^Total'
+  rows:
+    segment_revenue__food_delivery: 'India food ordering and delivery'
+    segment_revenue__hyperpure: 'Hyperpure supplies \(B2B business\)'
+    segment_revenue__quick_commerce: 'Quick commerce'
+    segment_revenue__going_out: 'Going Ou'
+    segment_revenue__all_other: 'All other segments'

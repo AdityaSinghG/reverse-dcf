@@ -114,6 +114,7 @@ companies:
       - quick_commerce                # Blinkit
       - hyperpure
       - going_out
+      - all_other                     # 'All other segments (Residual)' in the Q1FY27 segment note (p.26)
     benchmarks:
       market_index: "NIFTY 50"        # beta regression index
       risk_free: "India 10Y G-Sec yield"

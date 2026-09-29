@@ -5,3 +5,4 @@ pyyaml
 matplotlib
 openpyxl
 pytest
+pdfplumber
